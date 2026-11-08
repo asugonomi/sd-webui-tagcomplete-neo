@@ -347,6 +347,7 @@ async function syncOptions() {
         await loadTags(newCFG);
         await buildTagIndex();
         tagsLoaded = true;
+        window.tacFastSearch?.prepare(allTags, translations).catch(console.warn);
     }
 
     // Refresh temp files if model sort order changed
@@ -415,7 +416,8 @@ function isVisible(textArea) {
     let parentDiv = gradioApp().querySelector('.autocompleteParent' + textAreaId);
     return parentDiv.style.display === "flex";
 }
-function showResults(textArea) {
+function showResults(textArea, measureOnly = false) {
+    if (!measureOnly) window.tacPlus?.close();
     let textAreaId = getTextAreaIdentifier(textArea);
     let parentDiv = gradioApp().querySelector('.autocompleteParent' + textAreaId);
     parentDiv.style.display = "flex";
@@ -500,8 +502,25 @@ function getTagRegex() {
     return cachedTagRegex;
 }
 
+// A plain booru tag may contain spaces. Keep special prompt syntax on its own parser.
+function plainTagAtCaret(area) {
+    const value = area.value;
+    const caret = area.selectionStart;
+    const left = value.slice(0, caret).match(/[^,\r\n|]*$/)[0];
+    const right = value.slice(caret).match(/^[^,\r\n|]*/)[0];
+    const field = left + right;
+    if (/[<>()[\]{}:*@$]/.test(field) || (TAC_CFG.wcWrap && field.includes(TAC_CFG.wcWrap)))
+        return null;
+    const query = left.trim();
+    if (!query) return null;
+    const start = caret - left.length + field.match(/^\s*/)[0].length;
+    const end = caret + right.trimEnd().length;
+    return { start, end, query };
+}
+
 // On click, insert the tag into the prompt textbox with respect to the cursor position
 async function insertTextAtCursor(textArea, result, tagword, tabCompletedWithoutChoice = false) {
+    if (result.type === ResultType.tag && window.tacPlus?.selectExisting(textArea, result.text)) return;
     let text = result.text;
     let tagType = result.type;
 
@@ -611,14 +630,16 @@ async function insertTextAtCursor(textArea, result, tagword, tabCompletedWithout
     let editEnd = Math.min(cursorPos + tagword.length, prompt.length);
     let surrounding = prompt.substring(editStart, editEnd);
     let match = surrounding.match(new RegExp(escapeRegExp(`${tagword}`), "i"));
-    let afterInsertCursorPos = editStart + match.index + sanitizedText.length;
+    const plain = [ResultType.tag, ResultType.extra].includes(tagType) && plainTagAtCaret(textArea);
+    if (!plain && !match) return;
+    let afterInsertCursorPos = (plain ? plain.start : editStart + match.index) + sanitizedText.length;
 
     var optionalSeparator = "";
     let extraNetworkTypes = [ResultType.lora];
     let noCommaTypes = [ResultType.wildcardFile, ResultType.yamlWildcard, ResultType.umiWildcard].concat(extraNetworkTypes);
     if (!noCommaTypes.includes(tagType)) {
         // Append comma if enabled and not already present
-        let beforeComma = surrounding.match(new RegExp(`${escapeRegExp(tagword)}[,:]`, "i")) !== null;
+        let beforeComma = plain ? /^\s*[,|\r\n]/.test(prompt.slice(plain.end)) : surrounding.match(new RegExp(`${escapeRegExp(tagword)}[,:]`, "i")) !== null;
         if (TAC_CFG.appendComma)
             optionalSeparator = beforeComma ? "" : ",";
         // Add space if enabled
@@ -634,13 +655,13 @@ async function insertTextAtCursor(textArea, result, tagword, tabCompletedWithout
 
     // Escape $ signs since they are special chars for the replace function
     // We need four since we're also escaping them in replaceAll in the first place
-    sanitizedText = sanitizedText.replaceAll("$", "$$$$");
+    if (!plain) sanitizedText = sanitizedText.replaceAll("$", "$$$$");
 
     // Replace partial tag word with new text, add comma if needed
-    let insert = surrounding.replace(match, sanitizedText + optionalSeparator);
+    let insert = plain ? sanitizedText + optionalSeparator : surrounding.replace(match, sanitizedText + optionalSeparator);
 
     // Add back start
-    var newPrompt = prompt.substring(0, editStart) + insert + prompt.substring(editEnd);
+    var newPrompt = prompt.substring(0, plain ? plain.start : editStart) + insert + prompt.substring(plain ? plain.end : editEnd);
 
     // Add lora/lyco keywords if enabled and found
     let keywordsLength = 0;
@@ -809,6 +830,7 @@ function addResultsToList(textArea, results, tagword, resetList) {
             continue;
 
         let li = document.createElement("li");
+        window.tacPlus?.decorate(li, textArea, result);
 
         let flexDiv = document.createElement("div");
         flexDiv.classList.add("resultsFlexContainer");
@@ -842,6 +864,7 @@ function addResultsToList(textArea, results, tagword, resetList) {
                 }
             }
 
+            bestAlias ??= result.text;
             displayText = escapeHTML(bestAlias);
 
             // Append translation for alias if it exists and is not what the user typed
@@ -1241,10 +1264,14 @@ async function ensureTagsLoaded() {
             await buildTagIndex();
         }
         tagsLoaded = true;
+        window.tacFastSearch?.prepare(allTags, translations).catch(console.warn);
     }
 }
 
+let tacPlusSearchSerial = 0;
 async function autocomplete(textArea, prompt, fixedTag = null) {
+    const plusSearchId = ++tacPlusSearchSerial;
+    window.tacFastSearch?.prepare(allTags, translations).catch(console.warn);
     // Lazy-load tags on first interaction so startup doesn't block the main thread.
     // If not loaded yet, show a brief loading indicator and retry automatically.
     if (!tagsLoaded) {
@@ -1265,7 +1292,10 @@ async function autocomplete(textArea, prompt, fixedTag = null) {
         return;
     }
 
-    if (fixedTag === null) {
+    const plain = fixedTag === null && plainTagAtCaret(textArea);
+    if (plain) {
+        tagword = plain.query.replace(/ +/g, "_");
+    } else if (fixedTag === null) {
         // Match tags with RegEx to get the last edited one
         // We also match for the weighting format (e.g. "tag:1.0") here, and combine the two to get the full tag word set
         let weightedTags = [...prompt.matchAll(WEIGHT_REGEX)]
@@ -1317,6 +1347,7 @@ async function autocomplete(textArea, prompt, fixedTag = null) {
 
     // Process all parsers
     let resultCandidates = (await processParsers(textArea, prompt))?.filter(x => x.length > 0);
+    if (plusSearchId !== tacPlusSearchSerial) return;
     // If one ore more result candidates match, use their results
     if (resultCandidates && resultCandidates.length > 0) {
         // Flatten our candidate(s)
@@ -1333,12 +1364,13 @@ async function autocomplete(textArea, prompt, fixedTag = null) {
         resultCountBeforeNormalTags = results.length;
 
         // Create escaped search regex with support for * as a start placeholder
+        const tagPattern = tagword.split(/[ _]+/).map(escapeRegExp).join('[ _]+');
         let searchRegex;
         if (tagword.startsWith("*")) {
             tagword = tagword.slice(1);
             searchRegex = new RegExp(`${escapeRegExp(tagword)}`, 'i');
         } else {
-            searchRegex = new RegExp(`(^|[^a-zA-Z])${escapeRegExp(tagword)}`, 'i');
+            searchRegex = new RegExp(`(^|[^a-zA-Z])${tagPattern}`, 'i');
         }
 
         // Both normal tags and aliases/translations are included depending on the config
@@ -1387,9 +1419,22 @@ async function autocomplete(textArea, prompt, fixedTag = null) {
             tagsToSearch = merged.length > 0 ? merged : [];
         }
 
-        let filtered = tagsToSearch.filter(fil);
+        const kanaSearch = window.tacPlus?.kanaActive(tagword);
+        if (kanaSearch) { tagsToSearch = allTags; fil = window.tacPlus.kanaFilter(tagword); }
+        let filtered = null;
+        const workerSearch = window.tacFastSearch?.ready;
+        if (workerSearch) {
+            const limit = !TAC_CFG.showAllResults && !TAC_CFG.frequencySort ? TAC_CFG.maxResults : 0;
+            try { filtered = await window.tacFastSearch.search(tagsToSearch, searchRegex, tagword, kanaSearch, limit); }
+            catch(error) { console.warn('TAC worker search fallback', error); }
+            if (textArea.value !== prompt || plusSearchId !== tacPlusSearchSerial) return;
+        }
+        if (filtered === null) filtered = kanaSearch
+            ? await window.tacPlus.filterAsync(tagsToSearch, fil, textArea, prompt)
+            : tagsToSearch.filter(fil);
+        if (filtered === null || textArea.value !== prompt || plusSearchId !== tacPlusSearchSerial) return;
         // If indexed search yields nothing, fallback to full scan to avoid missing results
-        if (filtered.length === 0 && tagsToSearch !== allTags) {
+        if (!workerSearch && filtered.length === 0 && tagsToSearch !== allTags) {
             filtered = allTags.filter(fil);
         }
         filtered.forEach(t => {
@@ -1471,8 +1516,10 @@ async function autocomplete(textArea, prompt, fixedTag = null) {
     }
 
     // Defer DOM rendering to next frame so input stays responsive
+    const plusRenderResults = results, plusRenderTag = tagword;
     requestAnimationFrame(() => {
-        addResultsToList(textArea, results, tagword, true);
+        if (plusSearchId !== tacPlusSearchSerial || (textArea.value !== prompt && fixedTag === null)) return;
+        addResultsToList(textArea, plusRenderResults, plusRenderTag, true);
         showResults(textArea);
     });
 }
@@ -1642,11 +1689,21 @@ function addAutocompleteToArea(area) {
         hideResults(area);
 
         // Debounced handlers per textarea to avoid shared timeout interference
-        const debouncedAutocomplete = debounce(() => autocomplete(area, area.value), Math.min(TAC_CFG.delayTime, 50));
+        let searchTimer;
+        const scheduleSearch = delay => {
+            clearTimeout(searchTimer);
+            searchTimer = setTimeout(() => {
+                if (area === area.getRootNode().activeElement || area === document.activeElement)
+                    autocomplete(area, area.value);
+            }, delay);
+        };
         const debouncedUpdateRuby = debounce(() => updateRuby(area, area.value), 300);
 
         // Add autocomplete event listener
-        area.addEventListener('input', async (e) => {
+        const onAutocompleteInput = async (e) => {
+            if (e.tacFastHandled) return;
+            const fast = e.type === 'tac-fast-input';
+            if (fast) e = e.detail;
             // Cancel autocomplete itself if the event has no inputType (e.g. because it was triggered by the updateInput() function)
             if (!e.inputType && !tacSelfTrigger) return;
             // A self trigger (e.g. a wildcard file was just inserted, to show its contents) runs right away, as upstream:
@@ -1655,26 +1712,22 @@ function addAutocompleteToArea(area) {
             const isSelfTrigger = !e.inputType;
             tacSelfTrigger = false;
 
-            // Block hide we are composing (IME), so enter doesn't close the results
-            if (e.isComposing) {
-                hideBlocked = true;
-                setTimeout(() => { hideBlocked = false; }, 100);
-            }
-
-            const isDelete = e.inputType === 'deleteContentBackward' || e.inputType === 'deleteContentForward';
-
-            // Skip heavy translation update on delete to prevent lag.
-            // Run autocomplete immediately on delete (no debounce) so the dropdown
-            // stays perfectly in sync while backspacing; the indexed search is fast
-            // enough that this doesn't cause noticeable lag on modern devices.
-            if (!isDelete)
+            clearTimeout(searchTimer);
+            if (e.isComposing) return;
+            const isDelete = e.inputType?.startsWith("delete");
+            if (isDelete) {
+                if (resultsDiv.style.display !== "none") hideResults(area);
+                if (area.value.trim()) scheduleSearch(fast ? 35 : Math.max(300, TAC_CFG.delayTime));
+                else previousTags = [];
+            } else {
                 debouncedUpdateRuby();
-            if (isDelete || isSelfTrigger)
-                await autocomplete(area, area.value);
-            else
-                await debouncedAutocomplete();
+                if (isSelfTrigger) await autocomplete(area, area.value);
+                else scheduleSearch(fast ? 35 : Math.min(TAC_CFG.delayTime, 50));
+            }
             checkKeywordInsertionUndo(area, e);
-        });
+        };
+        area.addEventListener('input', onAutocompleteInput);
+        area.addEventListener('tac-fast-input', onAutocompleteInput);
         // Add focusout event listener
         area.addEventListener('focusout', debounce(() => {
             if (!hideBlocked)
@@ -1685,6 +1738,7 @@ function addAutocompleteToArea(area) {
         // CompositionEnd fires after the user has finished IME composing
         // We need to block hide here to prevent the enter key from insta-closing the results
         area.addEventListener('compositionend', () => {
+            scheduleSearch(Math.min(TAC_CFG.delayTime, 50));
             hideBlocked = true;
             setTimeout(() => { hideBlocked = false; }, 100);
         });

@@ -240,10 +240,15 @@ function sortByUsage(results, counts) {
             .slice(0, recentCount)
             .forEach((c, i) => recentRank.set(`${c.type}|${c.name}`, i));
     }
-    const rank = r => recentRank.get(usageKey(r)) ?? Number.MAX_SAFE_INTEGER;
-    results.forEach(r => { if (recentRank.has(usageKey(r))) r.usageBias = true; });
-
-    return results.sort((a, b) => (rank(a) - rank(b)) || (weights.get(b) - weights.get(a)));
+    // Avoid constructing tag-name keys inside every sort comparison.
+    if (!recentRank.size) return results.sort((a, b) => weights.get(b) - weights.get(a));
+    const ranks = new Map();
+    results.forEach(r => {
+        const rank = recentRank.get(usageKey(r));
+        ranks.set(r, rank ?? Number.MAX_SAFE_INTEGER);
+        if (rank !== undefined) r.usageBias = true;
+    });
+    return results.sort((a, b) => (ranks.get(a) - ranks.get(b)) || (weights.get(b) - weights.get(a)));
 }
 
 // Beautify return type for easier parsing
