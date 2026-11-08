@@ -1,4 +1,4 @@
-> **asugonomi modification fork:** [日本語の変更点・導入・検証範囲](README_MODIFICATIONS.md) / [Reversible installer](https://github.com/asugonomi/ForgeNeoModification). Based on `781a0b12bd16`.
+> **asugonomi modification fork:** [日本語の変更点・導入・検証範囲](README_MODIFICATIONS.md) / [Reversible installer](https://github.com/asugonomi/ForgeNeoModification). Based on `645f22f0d8ba`.
 
 <div align="center">
 
@@ -34,6 +34,14 @@ Fork of [a1111-sd-webui-tagcomplete](https://github.com/DominikDoom/a1111-sd-web
 
 ## 🆕 What's New
 
+### v0.3.2: Settings apply right away
+
+- **Changed settings take effect right away**: before, the extension could keep the old values until Forge Neo restarted, even after **Apply settings** or reloading the page ([#7](https://github.com/eduardoabreu81/sd-webui-tagcomplete-neo/issues/7))
+
+### v0.3.1: ANIMA artist prefix fix
+
+- **The `@` artist prefix follows the UI Preset**: artist tags get `@` as soon as you select the `anima` preset, and never on other presets. Before, the extension could still be looking at the previously loaded checkpoint ([#7](https://github.com/eduardoabreu81/sd-webui-tagcomplete-neo/issues/7))
+
 ### v0.3.0: LoRAs that match your model
 
 > ⚠️ **Updating from an older version?**
@@ -52,6 +60,12 @@ Fork of [a1111-sd-webui-tagcomplete](https://github.com/DominikDoom/a1111-sd-web
 ---
 
 ## 📖 Changelog
+
+### v0.3.2: Settings apply right away
+- Setting changes now reach the extension through Forge Neo's `onOptionsChanged` callback. The Apply settings listener used a selector that does not exist in Forge Neo, and on page load the extension read the values from server startup before the current ones arrived (#7)
+
+### v0.3.1: ANIMA artist prefix fix
+- `Auto-prefix Danbooru artist tags with '@' for ANIMA-based checkpoints` now decides from the UI Preset. Forge Neo only sends the checkpoint hash to the browser on page load or a settings change, so the CivitAI lookup could check the previous checkpoint, both missing the prefix on ANIMA and adding it on other models. The lookup stays as a fallback when there is no UI Preset (#7)
 
 ### v0.3.0: LoRAs that match your model
 - New `Filter Loras by the architecture of the UI preset` setting (Off / Hide other architectures / Show matching first, default Show matching first). The architecture is read from the safetensors header only (tensor names, shapes and metadata), or from the "sd version" set in Forge's Extra Networks metadata editor, and cached in `tags/temp/lora_arch_cache.json` (#6)
@@ -160,6 +174,12 @@ Fork of [a1111-sd-webui-tagcomplete](https://github.com/DominikDoom/a1111-sd-web
 ### v0.3.0: LoRAs that match your model ✅
 - LoRA suggestions follow the UI Preset's architecture ✅
 - "Recent, then frequent" and "Name (ignore folders)" sorting ✅
+
+### v0.3.1: ANIMA artist prefix fix ✅
+- `@` prefix follows the UI Preset ✅
+
+### v0.3.2: Settings apply right away ✅
+- Setting changes reach the extension without a restart ✅
 
 ### v0.4.0 — Tag data & relevance (planned)
 - Update Danbooru and e621 tag lists with current data

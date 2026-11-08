@@ -4,6 +4,7 @@ Usage: python tools/build_related_index.py tags.csv cooccurrence.csv[.gz]
 No files are downloaded, and an existing index is never overwritten.
 """
 import argparse
+from contextlib import closing
 import csv
 import gzip
 import os
@@ -26,13 +27,16 @@ def build(tags, pairs, destination):
     fd, name = tempfile.mkstemp(prefix=".related-", suffix=".sqlite3", dir=destination.parent)
     os.close(fd)
     try:
-        with sqlite3.connect(name) as database:
+        with closing(sqlite3.connect(name)) as database:
             database.executescript("CREATE TABLE tags(tag TEXT PRIMARY KEY, category INTEGER, count REAL, alias TEXT); CREATE TABLE pairs(a TEXT, b TEXT, n REAL);")
-            database.executemany("INSERT INTO tags VALUES(?,?,?,?)", ((r["tag"], int(r["category"]), float(r["count"]), r.get("alias", "")) for r in rows(tags)))
-            database.executemany("INSERT INTO pairs VALUES(?,?,?)", ((r["tag_a"], r["tag_b"], float(r["count"])) for r in rows(pairs)))
+            with closing(rows(tags)) as tag_rows:
+                database.executemany("INSERT INTO tags VALUES(?,?,?,?)", ((r["tag"], int(r["category"]), float(r["count"]), r.get("alias", "")) for r in tag_rows))
+            with closing(rows(pairs)) as pair_rows:
+                database.executemany("INSERT INTO pairs VALUES(?,?,?)", ((r["tag_a"], r["tag_b"], float(r["count"])) for r in pair_rows))
             database.executescript("CREATE INDEX pairs_a ON pairs(a); CREATE INDEX pairs_b ON pairs(b);")
             if database.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
                 raise RuntimeError("Index integrity check failed")
+            database.commit()
         # Atomic no-clobber publication. Hardlink then unlink temp keeps existing data safe.
         os.link(name, destination)
     finally:

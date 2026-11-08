@@ -4,7 +4,7 @@
 
 元プロジェクト: https://github.com/eduardoabreu81/sd-webui-tagcomplete-neo
 
-ベースコミット: `781a0b12bd16728bbe6d25006db60400fcbcc548`。このフォークはローカルで使用していた版を基準にしています。上流最新版に含まれるすべての変更を取り込んだという意味ではありません。
+ベースコミット: `645f22f0d8ba5ad7f10f54aadcf292cf0499e9f8`。2026-11-08に確認した上流最新版へ独自機能を統合しています。
 
 ## 導入と復元
 
@@ -37,3 +37,7 @@ python tools/build_related_index.py path/to/danbooru_tags.csv path/to/danbooru_t
 ```
 
 関連タグデータと同梱辞書は更新日・母数が異なります。7月31日版の共起を再計算したものではありません。追加UI/整形/正規化はnewtextdoc1111のMIT実装からの部分移植で、元ライセンスは `plus_data/LICENSE.Autocomplete-Plus` に保持しています。
+
+## 上流最新版への統合
+
+設定の即時反映とUIプリセットによるAnima判定を保持。文字コード・改行だけの差分を除去しました。上流連携のNode回帰テスト4件が通っています。

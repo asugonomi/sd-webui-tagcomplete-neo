@@ -1,4 +1,4 @@
-﻿const styleColors = {
+const styleColors = {
     "--results-neutral-text": ["#e0e0e0","black"],
     "--results-bg": ["#0b0f19", "#ffffff"],
     "--results-border-color": ["#4b5563", "#e5e7eb"],
@@ -376,7 +376,9 @@ async function syncOptions() {
     }
 
     // Apply changes
+    const animaPrefixChanged = TAC_CFG?.animaArtistPrefix !== newCFG.animaArtistPrefix;
     TAC_CFG = newCFG;
+    if (animaPrefixChanged) updateAnimaCheckpointStatus();
 
     // Callback
     await processQueue(QUEUE_AFTER_CONFIG_CHANGE, null);
@@ -549,7 +551,7 @@ async function insertTextAtCursor(textArea, result, tagword, tabCompletedWithout
     }
 
     // ANIMA-based checkpoints use '@' prefixed artist tags; auto-add it for Danbooru artist tags (category 1)
-    if (currentModelIsAnima && TAC_CFG.animaArtistPrefix !== "Off"
+    if (TAC_CFG.animaArtistPrefix !== "Off" && checkpointIsAnima()
         && tagType === ResultType.tag && result.category == 1
         && TAC_CFG.tagFile && TAC_CFG.tagFile.toLowerCase().startsWith("danbooru")
         && !sanitizedText.startsWith("@")) {
@@ -1759,15 +1761,6 @@ async function setup() {
     // Add mutation observer to accordions inside a base that has onDemand set to true
     addOnDemandObservers(addAutocompleteToArea);
 
-    // Add event listener to apply settings button so we can mirror the changes to our internal config
-    // Gradio 4 (Forge Neo) layout uses "#settings > .save"
-    let applySettingsButton = gradioApp().querySelector("#settings > .save");
-    applySettingsButton?.addEventListener("click", () => {
-        // Wait 500ms to make sure the settings have been applied to the webui opts object
-        setTimeout(async () => { 
-            await syncOptions();
-        }, 500);
-    });
     // Add change listener to our quicksettings to change our internal config without the apply button for them
     let quicksettings = gradioApp().querySelector('#quicksettings');
     let commonQueryPart = "[id^=setting_tac] > label";
@@ -1932,6 +1925,17 @@ function updateTacStatusDot(state) {
     }
 }
 var tacLoading = false;
+
+// Mirror applied settings to our internal config. Forge Neo calls this every time the
+// settings JSON is written, even if nothing changed, so compare our own options first.
+let lastTacOptions = null;
+onOptionsChanged(() => {
+    const tacOptions = JSON.stringify(Object.entries(opts).filter(([key]) => key.startsWith("tac_")));
+    if (tacOptions === lastTacOptions) return;
+    lastTacOptions = tacOptions;
+    if (TAC_CFG) syncOptions();
+});
+
 onUiUpdate(async () => {
     if (tacLoading) return;
     if (Object.keys(opts).length === 0) return;
